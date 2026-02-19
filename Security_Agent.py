@@ -1,6 +1,13 @@
+import os
+import json
 import ssl
 import socket
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 from typing import TypedDict, Annotated, List
+from dotenv import load_dotenv
+from colorama import Fore, Style, init
 
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph.message import add_messages
@@ -329,6 +336,83 @@ def form_sri_checker_node(state: SecurityState) -> dict:
     return {
         "form_findings": findings,
         "messages": [AIMessage(content="[Form/SRI Checker] Done")]
+    }
+
+def aggregator_node(state: SecurityState) -> dict:
+    """
+    Combines results from all checker nodes into a single
+    OWASP-mapped report and computes the risk level.
+    """
+    hf = state.get("header_findings", {})
+
+    owasp_report = {
+        "A01 - Broken Access Control": state.get("path_findings", {}),
+
+        "A02 - Cryptographic Failures": state.get("ssl_findings", {}),
+
+        "A03 - Injection (XSS)": {
+            k: v for k, v in hf.items()
+            if k == "Content-Security-Policy"
+        },
+
+        "A04 - Insecure Design": {
+            "csrf": state.get("form_findings", {}).get("csrf", {})
+        },
+
+        "A05 - Security Misconfiguration": {
+            k: v for k, v in hf.items()
+            if k in ("X-Frame-Options", "X-Content-Type-Options",
+                     "Referrer-Policy", "Permissions-Policy")
+        },
+
+        "A06 - Vulnerable Components": {
+            k: v for k, v in hf.items()
+            if k in ("Server", "X-Powered-By", "X-AspNet-Version", "X-Generator")
+        },
+
+        "A07 - Auth & Session Failures": state.get("cookie_findings", {}),
+
+        "A08 - Software Integrity Failures": {
+            "sri": state.get("form_findings", {}).get("sri", {})
+        },
+
+        "A09 - Logging & Monitoring Failures": state.get("error_findings", {}),
+
+        "A10 - SSRF": {
+            "_note": {
+                "status":  "INFO",
+                "message": "SSRF requires active payload testing — flagged for manual review.",
+                "hint":    "Look for parameters named: url, redirect, next, dest, src, fetch, load"
+            }
+        }
+    }
+
+    # ── Risk Scoring ──────────────────────────────────────────
+    all_statuses = []
+    for category_findings in owasp_report.values():
+        for val in category_findings.values():
+            if isinstance(val, dict):
+                all_statuses.append(val.get("status", ""))
+
+    fail_count = all_statuses.count("FAIL")
+    warn_count = all_statuses.count("WARN")
+
+    if fail_count >= 6:
+        risk_level = "🔴 CRITICAL"
+    elif fail_count >= 4:
+        risk_level = "🟠 HIGH"
+    elif fail_count >= 2 or warn_count >= 3:
+        risk_level = "🟡 MEDIUM"
+    else:
+        risk_level = "🟢 LOW"
+
+    return {
+        "owasp_report": owasp_report,
+        "risk_level":   risk_level,
+        "messages": [AIMessage(
+            content=f"[Aggregator] Done — Risk Level: {risk_level} "
+                    f"({fail_count} failures, {warn_count} warnings)"
+        )]
     }
 
 def build_security_graph():
