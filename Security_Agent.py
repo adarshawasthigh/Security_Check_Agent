@@ -38,7 +38,7 @@ def path_scanner_node(state: SecurityState) -> dict:
     ]
     for path in sensitive_paths:
         try:
-            r = requests.get(base + path)
+            r = requests.get(base + path,timeout=5, allow_redirects=False)
 
             if r.status_code == 200:
                 findings[path] = {
