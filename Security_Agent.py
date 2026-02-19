@@ -21,6 +21,62 @@ class SecurityState(TypedDict):
     scan_complete: bool
     errors:        List[str]
 
+def path_scanner_node(state: SecurityState) -> dict:
+    """
+    Probes commonly known sensitive URLs.
+    Maps to: A01
+    """
+    base = state["url"].rstrip("/")
+    findings = {}
+
+    sensitive_paths = [
+        "/login", "/config", "/configuration",
+        "/.htaccess", "/backup", "/db",
+        "/phpmyadmin", "/server-status", "/server-info",
+        "/api/v1/users", "/api/users", "/robots.txt",
+        "/sitemap.xml", "/swagger-ui.html", "/api-docs"
+    ]
+    for path in sensitive_paths:
+        try:
+            r = requests.get(base + path)
+
+            if r.status_code == 200:
+                findings[path] = {
+                    "status": "WARN",
+                    "owasp":  "A01",
+                    "code":   200,
+                    "risk":   "Publicly accessible — verify authentication is required"
+                }
+            elif r.status_code == 403:
+                findings[path] = {
+                    "status":  "INFO",
+                    "code":    403,
+                    "message": "Path exists but access is forbidden"
+                }
+            elif r.status_code in (301, 302):
+                findings[path] = {
+                    "status":   "INFO",
+                    "code":     r.status_code,
+                    "redirect": r.headers.get("Location", "unknown")
+                }
+            else:
+                findings[path] = {"status": "PASS", "code": r.status_code}
+
+        except requests.exceptions.Timeout:
+            findings[path] = {"status": "TIMEOUT"}
+        except Exception:
+            findings[path] = {"status": "SKIP"}
+
+    accessible = sum(1 for v in findings.values() if v.get("status") == "WARN")
+    return {
+        "path_findings": findings,
+        "messages": [AIMessage(
+            content=f"[Path Scanner] Done — {len(sensitive_paths)} paths checked, "
+                    f"{accessible} accessible"
+        )]
+    }
+            
+
 def build_security_graph():
    """
     Constructs the LangGraph with parallel checker nodes
