@@ -1,3 +1,5 @@
+import ssl
+import socket
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, AIMessage
@@ -40,6 +42,41 @@ def ssl_checker_node(state: SecurityState)->dict:
             "ssl_findings": findings,
             "messages": [AIMessage(content="[SSL Checker] Done — site is on HTTP (no TLS)")]
         }
+    # validate ssl certificate
+    hostname = urlparse(url).hostname
+    try:
+        ctx = ssl.create_default_context()
+        with ctx.wrap_socket(socket.socket(), server_hostname=hostname) as s:
+            s.settimeout(5)
+            s.connect((hostname, 443))
+            cert = s.getpeercert()
+
+        findings["protocol"]    = {"status": "PASS", "value": "HTTPS enabled"}
+        findings["certificate"] = {
+            "status":  "PASS",
+            "expires": cert.get("notAfter", "Unknown"),
+            "subject": str(cert.get("subject", ""))
+        }
+
+    except ssl.SSLCertVerificationError as e:
+        findings["certificate"] = {
+            "status": "FAIL",
+            "owasp":  "A02",
+            "risk":   f"Certificate verification failed: {str(e)}"
+        }
+    except ssl.SSLError as e:
+        findings["ssl_error"] = {
+            "status": "FAIL",
+            "owasp":  "A02",
+            "risk":   f"SSL handshake error: {str(e)}"
+        }
+    except Exception as e:
+        findings["error"] = {"status": "ERROR", "message": str(e)}
+
+    return {
+        "ssl_findings": findings,
+        "messages": [AIMessage(content="[SSL Checker] Done — certificate and protocol checked")]
+    }
 
 def path_scanner_node(state: SecurityState) -> dict:
     """
