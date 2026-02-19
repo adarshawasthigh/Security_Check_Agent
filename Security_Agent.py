@@ -23,6 +23,60 @@ class SecurityState(TypedDict):
     scan_complete: bool
     errors:        List[str]
 
+def header_checker_node(state: SecurityState) -> dict:
+    """
+    Checks HTTP response headers.
+    Maps to: A02, A03, A05, A06
+    """
+    url = state["url"]
+    findings = {}
+
+    try:
+        r = requests.get(url, timeout=10, allow_redirects=True)
+        hdrs = r.headers
+
+        # Security headers that should be present
+        expected = {
+            "Strict-Transport-Security": ("A02", "Missing HSTS — browser won't force HTTPS"),
+            "Content-Security-Policy":   ("A03", "No CSP — XSS attacks can execute freely"),
+            "X-Frame-Options":           ("A05", "No clickjacking protection"),
+            "X-Content-Type-Options":    ("A05", "MIME-type sniffing allowed"),
+            "Referrer-Policy":           ("A05", "Referrer URL leakage possible"),
+            "Permissions-Policy":        ("A05", "Browser API access unrestricted"),
+        }
+
+        for header, (owasp, risk) in expected.items():
+            if header in hdrs:
+                findings[header] = {
+                    "status": "PASS",
+                    "value": hdrs[header]
+                }
+            else:
+                findings[header] = {
+                    "status": "FAIL",
+                    "owasp": owasp,
+                    "risk":  risk
+                }
+
+        # Headers that should NOT be present (version disclosure)
+        disclosure_headers = ["Server", "X-Powered-By", "X-AspNet-Version", "X-Generator"]
+        for h in disclosure_headers:
+            if h in hdrs:
+                findings[h] = {
+                    "status": "WARN",
+                    "owasp":  "A06",
+                    "value":  hdrs[h],
+                    "risk":   f"Technology version exposed: {hdrs[h]}"
+                }
+
+    except requests.exceptions.RequestException as e:
+        findings["connection_error"] = {"status": "ERROR", "message": str(e)}
+
+    return {
+        "header_findings": findings,
+        "messages": [AIMessage(content=f"[Header Checker] Done — {len(findings)} items checked")]
+    }
+
 def ssl_checker_node(state: SecurityState)->dict:
     """
     Verifies HTTPS usage and SSL certificate validity.
