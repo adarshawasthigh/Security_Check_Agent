@@ -21,6 +21,26 @@ class SecurityState(TypedDict):
     scan_complete: bool
     errors:        List[str]
 
+def ssl_checker_node(state: SecurityState)->dict:
+    """
+    Verifies HTTPS usage and SSL certificate validity.
+    Maps to: A02
+    """
+    url = state["url"]
+    findings = {}
+
+    #HTTP check
+    if not url.startswith("https://"):
+        findings["protocol"] = {
+            "status": "FAIL",
+            "owasp":  "A02",
+            "risk":   "Site uses HTTP — all data transmitted in plaintext"
+        }
+        return {
+            "ssl_findings": findings,
+            "messages": [AIMessage(content="[SSL Checker] Done — site is on HTTP (no TLS)")]
+        }
+
 def path_scanner_node(state: SecurityState) -> dict:
     """
     Probes commonly known sensitive URLs.
