@@ -1,5 +1,7 @@
 import ssl
 import socket
+from typing import TypedDict, Annotated, List
+
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, AIMessage
@@ -189,7 +191,51 @@ def path_scanner_node(state: SecurityState) -> dict:
         )]
     }
             
+def cookie_checker_node(state: SecurityState) -> dict:
+    """
+    Inspects Set-Cookie attributes for security flags.
+    Maps to: A07
+    """
+    url = state["url"]
+    findings = {}
 
+    try:
+        r = requests.get(url, timeout=10)
+
+        if not r.cookies:
+            findings["_info"] = {
+                "status":  "INFO",
+                "message": "No cookies were set on the root endpoint"
+            }
+        else:
+            for cookie in r.cookies:
+                issues = []
+
+                # HttpOnly — prevents JS from reading the cookie
+                if not cookie.has_nonstandard_attr("HttpOnly"):
+                    issues.append("Missing HttpOnly → XSS can steal this cookie")
+
+                # Secure — only send cookie over HTTPS
+                if not cookie.secure:
+                    issues.append("Missing Secure flag → cookie sent over HTTP too")
+
+                # SameSite — prevents cross-site request forgery
+                if not cookie.has_nonstandard_attr("SameSite"):
+                    issues.append("Missing SameSite → CSRF risk")
+
+                findings[cookie.name] = {
+                    "status": "FAIL" if issues else "PASS",
+                    "owasp":  "A07",
+                    "issues": issues
+                }
+
+    except Exception as e:
+        findings["error"] = {"status": "ERROR", "message": str(e)}
+
+    return {
+        "cookie_findings": findings,
+        "messages": [AIMessage(content=f"[Cookie Checker] Done — {len(findings)} cookie(s) analyzed")]
+    }
 def build_security_graph():
    """
     Constructs the LangGraph with parallel checker nodes
