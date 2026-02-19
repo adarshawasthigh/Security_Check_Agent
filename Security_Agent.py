@@ -135,17 +135,19 @@ def ssl_checker_node(state: SecurityState)->dict:
 def path_scanner_node(state: SecurityState) -> dict:
     """
     Probes commonly known sensitive URLs.
-    Maps to: A01
+    Maps to: A01,A05
     """
     base = state["url"].rstrip("/")
     findings = {}
 
     sensitive_paths = [
-        "/login", "/config", "/configuration",
-        "/.htaccess", "/backup", "/db",
+        "/admin", "/administrator", "/wp-admin", "/wp-login.php",
+        "/login", "/dashboard", "/config", "/configuration",
+        "/.env", "/.git", "/.htaccess", "/backup", "/db",
         "/phpmyadmin", "/server-status", "/server-info",
         "/api/v1/users", "/api/users", "/robots.txt",
-        "/sitemap.xml", "/swagger-ui.html", "/api-docs"
+        "/sitemap.xml", "/actuator", "/actuator/env",
+        "/console", "/swagger-ui.html", "/api-docs"
     ]
     for path in sensitive_paths:
         try:
