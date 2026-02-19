@@ -236,6 +236,101 @@ def cookie_checker_node(state: SecurityState) -> dict:
         "cookie_findings": findings,
         "messages": [AIMessage(content=f"[Cookie Checker] Done — {len(findings)} cookie(s) analyzed")]
     }
+
+def error_checker_node(state: SecurityState) -> dict:
+    """
+    Checks if error pages leak stack traces or internal details.
+    Maps to: A09
+    """
+    base = state["url"].rstrip("/")
+    findings = {}
+
+    test_paths = [
+        "/this-page-absolutely-does-not-exist-xyz-123",
+        "/error-test-probe-abc"
+    ]
+
+    # Keywords that suggest internal information is leaking
+    leak_keywords = [
+        "stack trace", "traceback", "exception",
+        "sql syntax", "at line", "debug", "undefined method",
+        "mysql_fetch", "ORA-", "pg_query", "mysqli_error",
+        "fatal error", "parse error", "notice:", "warning:",
+        "internal server error details", "django.core",
+        "werkzeug", "flask", "laravel", "symfony"
+    ]
+
+    for path in test_paths:
+        try:
+            r = requests.get(base + path, timeout=5)
+            body = r.text.lower()
+            found_leaks = [k for k in leak_keywords if k in body]
+
+            findings[path] = {
+                "status":      "FAIL" if found_leaks else "PASS",
+                "owasp":       "A09",
+                "status_code": r.status_code,
+                "leaks_found": found_leaks,
+                "risk":        f"Error page reveals internal details: {found_leaks}"
+                               if found_leaks else None
+            }
+        except Exception as e:
+            findings[path] = {"status": "ERROR", "message": str(e)}
+
+    return {
+        "error_findings": findings,
+        "messages": [AIMessage(content="[Error Checker] Done — error page content analyzed")]
+    }
+
+def form_sri_checker_node(state: SecurityState) -> dict:
+    """
+    Checks CSRF tokens on POST forms and SRI on external scripts.
+    Maps to: A03, A04, A08
+    """
+    url = state["url"]
+    findings = {}
+
+    try:
+        soup = BeautifulSoup(requests.get(url, timeout=10).text, "html.parser")
+
+        # ── SRI Check (A08) ──────────────────────────────────
+        ext_scripts  = [s for s in soup.find_all("script", src=True) if s["src"].startswith("http")]
+        missing_sri  = [s["src"] for s in ext_scripts if not s.get("integrity")]
+
+        findings["sri"] = {
+            "status":  "FAIL" if missing_sri else "PASS",
+            "owasp":   "A08",
+            "missing": missing_sri[:4],
+            "risk":    "CDN scripts loaded without integrity check" if missing_sri else None
+        }
+
+        # ── CSRF Check (A04) ─────────────────────────────────
+        CSRF_NAMES = {"csrf_token", "_token", "csrf", "authenticity_token",
+                      "_csrf", "csrfmiddlewaretoken", "verify_token"}
+
+        csrf_issues = []
+        for i, form in enumerate(soup.find_all("form")):
+            if form.get("method", "GET").upper() != "POST":
+                continue
+            input_names = {inp.get("name", "").lower() for inp in form.find_all("input")}
+            if not (input_names & CSRF_NAMES):
+                csrf_issues.append(f"Form #{i+1} (action={form.get('action', '/')})")
+
+        findings["csrf"] = {
+            "status": "FAIL" if csrf_issues else "PASS",
+            "owasp":  "A04",
+            "issues": csrf_issues,
+            "risk":   "POST forms missing CSRF tokens" if csrf_issues else None
+        }
+
+    except Exception as e:
+        findings["error"] = {"status": "ERROR", "message": str(e)}
+
+    return {
+        "form_findings": findings,
+        "messages": [AIMessage(content="[Form/SRI Checker] Done")]
+    }
+
 def build_security_graph():
    """
     Constructs the LangGraph with parallel checker nodes
