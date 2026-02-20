@@ -52,8 +52,6 @@ def header_checker_node(state: SecurityState) -> dict:
     try:
         r = requests.get(url, timeout=10, allow_redirects=True)
         hdrs = r.headers
-
-        # Security headers that should be present
         expected = {
             "Strict-Transport-Security": ("A02", "Missing HSTS — browser won't force HTTPS"),
             "Content-Security-Policy":   ("A03", "No CSP — XSS attacks can execute freely"),
@@ -265,8 +263,6 @@ def error_checker_node(state: SecurityState) -> dict:
         "/this-page-absolutely-does-not-exist-xyz-123",
         "/error-test-probe-abc"
     ]
-
-    # Keywords that suggest internal information is leaking
     leak_keywords = [
         "stack trace", "traceback", "exception",
         "sql syntax", "at line", "debug", "undefined method",
@@ -309,7 +305,7 @@ def form_sri_checker_node(state: SecurityState) -> dict:
     try:
         soup = BeautifulSoup(requests.get(url, timeout=10).text, "html.parser")
 
-        # ── SRI Check (A08) ──────────────────────────────────
+        #SRICheck (A08)
         ext_scripts  = [s for s in soup.find_all("script", src=True) if s["src"].startswith("http")]
         missing_sri  = [s["src"] for s in ext_scripts if not s.get("integrity")]
 
@@ -320,7 +316,7 @@ def form_sri_checker_node(state: SecurityState) -> dict:
             "risk":    "CDN scripts loaded without integrity check" if missing_sri else None
         }
 
-        # ── CSRF Check (A04) ─────────────────────────────────
+        #CSRF Check (A04)
         CSRF_NAMES = {"csrf_token", "_token", "csrf", "authenticity_token",
                       "_csrf", "csrfmiddlewaretoken", "verify_token"}
 
@@ -396,7 +392,7 @@ def aggregator_node(state: SecurityState) -> dict:
         }
     }
 
-    # ── Risk Scoring ──────────────────────────────────────────
+    #Risk Scoring 
     all_statuses = []
     for category_findings in owasp_report.values():
         for val in category_findings.values():
@@ -510,3 +506,64 @@ def build_security_graph():
     graph.add_edge("report_generator", END)
 
     return graph.compile()
+
+def run_security_scan(url: str):
+    """Entry point — runs the full OWASP assessment pipeline."""
+    
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    print(Fore.CYAN  + "\n" + "=" * 60)
+    print(Fore.CYAN  + "OWASP Top 10 Security Agent")
+    print(Fore.CYAN  + "=" * 60)
+    print(Fore.YELLOW + f"\nTarget  : {url}")
+    print(Fore.YELLOW +  "Model   : gemini-2.0-flash")
+    print(Fore.CYAN  + "\n" + "-" * 60 + "\n")
+
+    graph = build_security_graph()
+
+    initial_state: SecurityState = {
+        "url":             url,
+        "messages":        [HumanMessage(content=f"Perform OWASP Top 10 scan on {url}")],
+        "header_findings": {},
+        "ssl_findings":    {},
+        "cookie_findings": {},
+        "path_findings":   {},
+        "form_findings":   {},
+        "error_findings":  {},
+        "owasp_report":    {},
+        "risk_level":      "",
+        "final_report":    "",
+        "scan_complete":   False,
+        "errors":          [],
+    }
+
+    print(Fore.GREEN + "Running checks...\n")
+
+    for event in graph.stream(initial_state):
+        for node_name, node_output in event.items():
+            if "messages" in node_output:
+                for msg in node_output["messages"]:
+                    if isinstance(msg, AIMessage):
+                        print(Fore.WHITE + f"   {msg.content}")
+                        
+    final_state = graph.invoke(initial_state)
+
+    print(Fore.CYAN + "\n" + "=" * 60)
+    print(Fore.GREEN + "FINAL SECURITY REPORT")
+    print(Fore.CYAN + "=" * 60 + "\n")
+    print(final_state["final_report"])
+
+    print(Fore.CYAN + "\n" + "=" * 60)
+    print(Fore.YELLOW + f"   Overall Risk Level : {final_state['risk_level']}")
+    print(Fore.CYAN  + "=" * 60 + "\n")
+
+    return final_state
+
+if __name__ == "__main__":
+    print(Fore.CYAN + "\nOWASP Top 10 AI Security Agent — LangGraph + Gemini\n")
+    url = input(Fore.WHITE + "Enter target URL: ").strip()
+    if not url:
+        print(Fore.RED + "No URL provided. Exiting.")
+    else:
+        run_security_scan(url)
