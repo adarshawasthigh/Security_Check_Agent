@@ -14,6 +14,15 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+load_dotenv()
+init(autoreset=True)
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise EnvironmentError(
+        "\nGEMINI_API_KEY not found!\n"
+    )
+
 class SecurityState(TypedDict):
     url: str
     messages: Annotated[list, add_messages]
@@ -398,13 +407,13 @@ def aggregator_node(state: SecurityState) -> dict:
     warn_count = all_statuses.count("WARN")
 
     if fail_count >= 6:
-        risk_level = "🔴 CRITICAL"
+        risk_level = "CRITICAL"
     elif fail_count >= 4:
-        risk_level = "🟠 HIGH"
+        risk_level = "HIGH"
     elif fail_count >= 2 or warn_count >= 3:
-        risk_level = "🟡 MEDIUM"
+        risk_level = "MEDIUM"
     else:
-        risk_level = "🟢 LOW"
+        risk_level = "LOW"
 
     return {
         "owasp_report": owasp_report,
@@ -414,6 +423,56 @@ def aggregator_node(state: SecurityState) -> dict:
                     f"({fail_count} failures, {warn_count} warnings)"
         )]
     }
+
+def report_generator_node(state: SecurityState) -> dict:
+    """
+    Uses Google Gemini to generate a professional,
+    human-readable security report from raw findings.
+    """
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash",          
+        google_api_key=GEMINI_API_KEY,
+        temperature=0.1,             
+        max_output_tokens=2048,
+    )
+
+    prompt = f"""You are a senior cybersecurity analyst. 
+Generate a professional OWASP Top 10 security assessment report based on the automated scan results below.
+
+Target URL : {state['url']}
+Risk Level : {state['risk_level']}
+
+{json.dumps(state['owasp_report'], indent=2)}
+
+Structure your report exactly as follows:
+
+1. EXECUTIVE SUMMARY
+   - 3-4 sentences: overall security posture, risk level, most critical issues
+
+2. FINDINGS BY OWASP CATEGORY
+   - Only include categories that have FAIL or WARN status
+   - For each: category name, what was found, why it matters
+
+3. TOP 5 PRIORITIZED RECOMMENDATIONS
+   - Ordered by severity (most critical first)
+   - Each recommendation must be specific and actionable
+   - Include the fix, not just the problem
+
+4. DISCLAIMER
+   - One short paragraph noting this is automated passive scanning only
+   - Not a substitute for professional penetration testing
+
+Keep the tone professional but clear. Avoid jargon where possible.
+"""
+
+    response = llm.invoke([HumanMessage(content=prompt)])
+
+    return {
+        "final_report":  response.content,
+        "scan_complete": True,
+        "messages": [AIMessage(content="[Report Generator] Done — Gemini report generated")]
+    }
+
 
 def build_security_graph():
    """
@@ -447,7 +506,6 @@ def build_security_graph():
     graph.add_edge("form_sri_checker", "aggregator")
     graph.add_edge("error_checker",    "aggregator")
 
-    # Linear: aggregator → report → done
     graph.add_edge("aggregator","report_generator")
     graph.add_edge("report_generator", END)
 
