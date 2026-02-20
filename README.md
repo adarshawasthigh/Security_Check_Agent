@@ -71,11 +71,5 @@ Checker Checker Checker  Scanner  Checker  Checker
 
 `gemini-2.0-flash` — fast, accurate, and free tier available.
 
-To switch models, edit line in `security_agent.py`:
-```python
-model="gemini-2.0-flash"       # default (fast)
-model="gemini-1.5-pro"         # more powerful
-model="gemini-2.0-flash-lite"  # most lightweight
-```
+we can change accordingly or other models can be used as openAI etc just change import and model type before invoke
 
----
