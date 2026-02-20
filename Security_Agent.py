@@ -471,13 +471,13 @@ Keep the tone professional but clear. Avoid jargon where possible.
 
 
 def build_security_graph():
-   """
+    """
     Constructs the LangGraph with parallel checker nodes
     that all feed into aggregator → report generator.
     """
-  graph = StateGraph(SecurityState)
+    graph = StateGraph(SecurityState)
 
-    # nodes
+    # Register nodes
     graph.add_node("header_checker",    header_checker_node)
     graph.add_node("ssl_checker",       ssl_checker_node)
     graph.add_node("cookie_checker",    cookie_checker_node)
@@ -487,7 +487,7 @@ def build_security_graph():
     graph.add_node("aggregator",        aggregator_node)
     graph.add_node("report_generator",  report_generator_node)
 
-    #edges(Routing)
+    # Edges (Routing from START to checkers in parallel)
     graph.add_edge(START, "header_checker")
     graph.add_edge(START, "ssl_checker")
     graph.add_edge(START, "cookie_checker")
@@ -495,6 +495,7 @@ def build_security_graph():
     graph.add_edge(START, "form_sri_checker")
     graph.add_edge(START, "error_checker")
 
+    # Fan-in: All checkers converge at aggregator
     graph.add_edge("header_checker",   "aggregator")
     graph.add_edge("ssl_checker",      "aggregator")
     graph.add_edge("cookie_checker",   "aggregator")
@@ -502,11 +503,12 @@ def build_security_graph():
     graph.add_edge("form_sri_checker", "aggregator")
     graph.add_edge("error_checker",    "aggregator")
 
-    graph.add_edge("aggregator","report_generator")
+    # Final sequence
+    graph.add_edge("aggregator", "report_generator")
     graph.add_edge("report_generator", END)
 
     return graph.compile()
-
+    
 def run_security_scan(url: str):
     """Entry point — runs the full OWASP assessment pipeline."""
     
