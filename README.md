@@ -1,9 +1,9 @@
-# 🔐 OWASP Top 10 Security Agent
+#  OWASP Top 10 Security Agent
 ### Built with LangGraph + Google Gemini API
 
 ---
 
-## 📦 Installation
+##  Installation
 
 install from the requirements file:
 
@@ -21,7 +21,7 @@ cp .env.example .env
 
 ---
 
-## 🚀 Run
+##  Run
 
 ```bash
 python security_agent.py
@@ -30,7 +30,7 @@ python security_agent.py
 Enter the target URL when prompted.
 ---
 
-## 🗂️ Project Structure
+##  Project Structure
 
 ```
 owasp_langgraph_gemini/
@@ -67,7 +67,7 @@ Checker Checker Checker  Scanner  Checker  Checker
 
 ---
 
-## 🤖 Gemini Model Used
+## Gemini Model Used
 
 `gemini-2.0-flash` — fast, accurate, and free tier available.
 
