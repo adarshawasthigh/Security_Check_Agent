@@ -43,7 +43,8 @@ class SecurityState(TypedDict):
 
 def header_checker_node(state: SecurityState) -> dict:
     """
-    Checks HTTP response headers.
+    Uses Gemini to evaluate HTTP response headers 
+    for missing security policies and information disclosure.
     Maps to: A02, A03, A05, A06
     """
     url = state["url"]
@@ -51,46 +52,59 @@ def header_checker_node(state: SecurityState) -> dict:
 
     try:
         r = requests.get(url, timeout=10, allow_redirects=True)
-        hdrs = r.headers
-        expected = {
-            "Strict-Transport-Security": ("A02", "Missing HSTS — browser won't force HTTPS"),
-            "Content-Security-Policy":   ("A03", "No CSP — XSS attacks can execute freely"),
-            "X-Frame-Options":           ("A05", "No clickjacking protection"),
-            "X-Content-Type-Options":    ("A05", "MIME-type sniffing allowed"),
-            "Referrer-Policy":           ("A05", "Referrer URL leakage possible"),
-            "Permissions-Policy":        ("A05", "Browser API access unrestricted"),
-        }
+        actual_headers = dict(r.headers)
 
-        for header, (owasp, risk) in expected.items():
-            if header in hdrs:
-                findings[header] = {
-                    "status": "PASS",
-                    "value": hdrs[header]
-                }
-            else:
-                findings[header] = {
-                    "status": "FAIL",
-                    "owasp": owasp,
-                    "risk":  risk
-                }
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash",          
+            google_api_key=GEMINI_API_KEY,
+            temperature=0.1, 
+        )
 
-        # Headers that should NOT be present (version disclosure)
-        disclosure_headers = ["Server", "X-Powered-By", "X-AspNet-Version", "X-Generator"]
-        for h in disclosure_headers:
-            if h in hdrs:
-                findings[h] = {
-                    "status": "WARN",
-                    "owasp":  "A06",
-                    "value":  hdrs[h],
-                    "risk":   f"Technology version exposed: {hdrs[h]}"
-                }
+        prompt = f"""You are a security analyst evaluating HTTP response headers.
+Target URL: {url}
+Actual Headers Received: {json.dumps(actual_headers)}
+
+Analyze these headers and identify:
+1. Missing security headers (e.g., CSP, HSTS, frame options, etc.).
+2. Information disclosure headers (e.g., Server, X-Powered-By, framework versions).
+
+Respond ONLY with a valid JSON object in this exact format, with no markdown formatting:
+{{
+  "missing_headers": [
+    {{"header": "Header-Name", "owasp": "AXX", "risk": "Why it matters"}}
+  ],
+  "disclosures": [
+    {{"header": "Header-Name", "value": "Exposed Value", "owasp": "A06", "risk": "Why it matters"}}
+  ]
+}}
+"""
+        response = llm.invoke([HumanMessage(content=prompt)])
+        clean_text = response.content.strip().lstrip("```json").rstrip("```").strip()
+        analysis = json.loads(clean_text)
+
+        for item in analysis.get("missing_headers", []):
+            findings[item["header"]] = {
+                "status": "FAIL",
+                "owasp": item.get("owasp", "A05"),
+                "risk": item.get("risk", "Missing security header")
+            }
+        
+        for item in analysis.get("disclosures", []):
+            findings[item["header"]] = {
+                "status": "WARN",
+                "owasp": item.get("owasp", "A06"),
+                "value": item.get("value", ""),
+                "risk": item.get("risk", "Technology exposed")
+            }
 
     except requests.exceptions.RequestException as e:
         findings["connection_error"] = {"status": "ERROR", "message": str(e)}
+    except json.JSONDecodeError:
+        findings["llm_error"] = {"status": "ERROR", "message": "Failed to parse LLM header analysis."}
 
     return {
         "header_findings": findings,
-        "messages": [AIMessage(content=f"[Header Checker] Done — {len(findings)} items checked")]
+        "messages": [AIMessage(content=f"[Header Checker] Done — dynamically analyzed headers")]
     }
 
 def ssl_checker_node(state: SecurityState)->dict:
