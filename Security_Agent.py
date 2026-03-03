@@ -492,14 +492,13 @@ def build_security_graph():
 
     # Edges (Routing from START to checkers in parallel)
     graph.add_edge(START, "header_checker")
+    graph.add_edge("header_checker", "path_scanner")
     graph.add_edge(START, "ssl_checker")
     graph.add_edge(START, "cookie_checker")
-    graph.add_edge(START, "path_scanner")
     graph.add_edge(START, "form_sri_checker")
     graph.add_edge(START, "error_checker")
 
     # Fan-in: All checkers converge at aggregator
-    graph.add_edge("header_checker",   "aggregator")
     graph.add_edge("ssl_checker",      "aggregator")
     graph.add_edge("cookie_checker",   "aggregator")
     graph.add_edge("path_scanner",     "aggregator")
