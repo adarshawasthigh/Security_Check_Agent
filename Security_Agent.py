@@ -544,14 +544,21 @@ def run_security_scan(url: str):
 
     print(Fore.GREEN + "Running checks...\n")
 
+    print(Fore.GREEN + "Running checks...\n")
+
+    final_state = None
+ 
     for event in graph.stream(initial_state):
         for node_name, node_output in event.items():
             if "messages" in node_output:
                 for msg in node_output["messages"]:
                     if isinstance(msg, AIMessage):
                         print(Fore.WHITE + f"   {msg.content}")
-                        
-    final_state = graph.invoke(initial_state)
+            
+            final_state = node_output
+
+    print(Fore.CYAN + "\n" + "=" * 60)
+    print(Fore.GREEN + "FINAL SECURITY REPORT")
 
     print(Fore.CYAN + "\n" + "=" * 60)
     print(Fore.GREEN + "FINAL SECURITY REPORT")
