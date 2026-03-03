@@ -45,24 +45,27 @@ owasp_langgraph_gemini/
 ## Architecture
 
 ```
-         START
-           │
-    ┌──────┴───────────────────────────────────┐
-    │      │         │         │       │       │
-Header   SSL     Cookie    Path    Form/SRI  Error
-Checker Checker Checker  Scanner  Checker  Checker
-    │      │         │         │       │       │
-    └──────┴─────────┴─────────┴───────┴───────┘
-                          │
-                     Aggregator
-                    (OWASP mapping
-                    + risk scoring)
-                          │
-                  Report Generator
-                  (Gemini AI writes
-                   the final report)
-                          │
-                         END
+          START
+            │
+  ┌─────────┼─────────┬─────────┬─────────┐
+  │         │         │         │         │
+Header    Error      SSL     Cookie      Form
+Checker  Checker   Checker   Checker   Checker
+  │         │         │         │         │
+ Path       │         │         │         │
+Scanner     │         │         │         │
+  │         │         │         │         │
+  └─────────┴─────────┴─────────┴─────────┘
+                      │
+                  Aggregator
+                (OWASP mapping
+               + risk scoring)
+                      │
+               Report Generator
+               (Gemini AI writes
+               the final report)
+                      │
+                     END
 ```
 
 ---
