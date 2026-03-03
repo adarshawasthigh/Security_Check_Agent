@@ -544,32 +544,21 @@ def run_security_scan(url: str):
 
     print(Fore.GREEN + "Running checks...\n")
 
-    print(Fore.GREEN + "Running checks...\n")
-
-    final_state = None
- 
-    for event in graph.stream(initial_state):
-        for node_name, node_output in event.items():
-            if "messages" in node_output:
-                for msg in node_output["messages"]:
-                    if isinstance(msg, AIMessage):
-                        print(Fore.WHITE + f"   {msg.content}")
-            
-            final_state = node_output
-
-    print(Fore.CYAN + "\n" + "=" * 60)
-    print(Fore.GREEN + "FINAL SECURITY REPORT")
+    # We use invoke() here. It will run the entire graph sequentially and guarantee no data is lost at the end.
+    final_state = graph.invoke(initial_state)
 
     print(Fore.CYAN + "\n" + "=" * 60)
     print(Fore.GREEN + "FINAL SECURITY REPORT")
     print(Fore.CYAN + "=" * 60 + "\n")
-    print(final_state["final_report"])
+    print(final_state.get("final_report", "Report generation failed."))
 
     print(Fore.CYAN + "\n" + "=" * 60)
-    print(Fore.YELLOW + f"   Overall Risk Level : {final_state['risk_level']}")
+  
+    print(Fore.YELLOW + f"   Overall Risk Level : {final_state.get('risk_level', 'UNKNOWN')}")
     print(Fore.CYAN  + "=" * 60 + "\n")
 
     return final_state
+
 
 if __name__ == "__main__":
     print(Fore.CYAN + "\nOWASP Top 10 AI Security Agent — LangGraph + Gemini\n")
