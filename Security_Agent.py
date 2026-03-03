@@ -108,25 +108,12 @@ Respond ONLY with a valid JSON object in this exact format, with no markdown for
     }
 
 def ssl_checker_node(state: SecurityState)->dict:
-    """
-    Verifies HTTPS usage and SSL certificate validity.
-    Maps to: A02
-    """
     url = state["url"]
     findings = {}
-
-    #HTTP check
     if not url.startswith("https://"):
-        findings["protocol"] = {
-            "status": "FAIL",
-            "owasp":  "A02",
-            "risk":   "Site uses HTTP — all data transmitted in plaintext"
-        }
-        return {
-            "ssl_findings": findings,
-            "messages": [AIMessage(content="[SSL Checker] Done — site is on HTTP (no TLS)")]
-        }
-    # validate ssl certificate
+        findings["protocol"] = {"status": "FAIL", "owasp": "A02", "risk": "Site uses HTTP"}
+        return {"ssl_findings": findings, "messages": [AIMessage(content="[SSL Checker] Done — site is on HTTP")]}
+    
     hostname = urlparse(url).hostname
     try:
         ctx = ssl.create_default_context()
@@ -134,74 +121,69 @@ def ssl_checker_node(state: SecurityState)->dict:
             s.settimeout(5)
             s.connect((hostname, 443))
             cert = s.getpeercert()
-
-        findings["protocol"]    = {"status": "PASS", "value": "HTTPS enabled"}
-        findings["certificate"] = {
-            "status":  "PASS",
-            "expires": cert.get("notAfter", "Unknown"),
-            "subject": str(cert.get("subject", ""))
-        }
-
-    except ssl.SSLCertVerificationError as e:
-        findings["certificate"] = {
-            "status": "FAIL",
-            "owasp":  "A02",
-            "risk":   f"Certificate verification failed: {str(e)}"
-        }
-    except ssl.SSLError as e:
-        findings["ssl_error"] = {
-            "status": "FAIL",
-            "owasp":  "A02",
-            "risk":   f"SSL handshake error: {str(e)}"
-        }
+        findings["protocol"] = {"status": "PASS", "value": "HTTPS enabled"}
+        findings["certificate"] = {"status": "PASS", "expires": cert.get("notAfter", "Unknown")}
     except Exception as e:
         findings["error"] = {"status": "ERROR", "message": str(e)}
 
-    return {
-        "ssl_findings": findings,
-        "messages": [AIMessage(content="[SSL Checker] Done — certificate and protocol checked")]
-    }
-
+    return {"ssl_findings": findings, "messages": [AIMessage(content="[SSL Checker] Done")]}
+    
 def path_scanner_node(state: SecurityState) -> dict:
-    """
-    Probes commonly known sensitive URLs.
-    Maps to: A01,A05
-    """
-    base = state["url"].rstrip("/")
+    parsed = urlparse(state["url"])
+    base = f"{parsed.scheme}://{parsed.netloc}"
     findings = {}
 
-    sensitive_paths = [
-        "/admin", "/administrator", "/wp-admin", "/wp-login.php",
-        "/login", "/dashboard", "/config", "/configuration",
-        "/.env", "/.git", "/.htaccess", "/backup", "/db",
-        "/phpmyadmin", "/server-status", "/server-info",
-        "/api/v1/users", "/api/users", "/robots.txt",
-        "/sitemap.xml", "/actuator", "/actuator/env",
-        "/console", "/swagger-ui.html", "/api-docs"
+    # Extract tech stack from the header_checker that ran right before this!
+    hf = state.get("header_findings", {})
+    tech_stack = [f"{k}: {v.get('value')}" for k, v in hf.items() if v.get("status") == "WARN" and "value" in v]
+    tech_context = f"The server exposed the following technology headers: {', '.join(tech_stack)}." if tech_stack else "No specific server technology headers were exposed."
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash",          
+        google_api_key=GEMINI_API_KEY,
+        temperature=0.2, 
+    )
+
+    prompt = f"""You are an expert penetration tester. The target URL is: {base}
+{tech_context}
+
+Generate a list of the 20 most critical sensitive paths, files, or directories to check for exposure.
+Tailor your guesses based on the identified tech stack and standard web application vulnerabilities.
+
+Respond ONLY with a valid JSON array of strings. Do not include markdown formatting.
+Example format: ["/admin", "/.env", "/api/swagger.json", "/server-status"]
+"""
+    
+    # 1. Mandatory baseline paths (The Shotgun)
+    baseline_paths = [
+        "/.env", "/.git", "/robots.txt", "/sitemap.xml", 
+        "/admin", "/server-status", "/backup.zip"
     ]
-    for path in sensitive_paths:
+
+    try:
+        response = llm.invoke([HumanMessage(content=prompt)])
+        clean_text = response.content.strip().lstrip("```json").rstrip("```").strip()
+        ai_paths = json.loads(clean_text)
+        
+        if not isinstance(ai_paths, list):
+            raise ValueError("LLM did not return a list.")
+            
+    except Exception as e:
+        ai_paths = []
+
+    # 2. Combine baseline + AI paths, remove duplicates, cap at 30 (The Sniper)
+    combined_paths = list(set(baseline_paths + ai_paths))[:30]
+
+    for path in combined_paths:
         try:
-            r = requests.get(base + path,timeout=5, allow_redirects=False)
+            r = requests.get(base + path, timeout=5, allow_redirects=False)
 
             if r.status_code == 200:
-                findings[path] = {
-                    "status": "WARN",
-                    "owasp":  "A01",
-                    "code":   200,
-                    "risk":   "Publicly accessible — verify authentication is required"
-                }
+                findings[path] = {"status": "WARN", "owasp": "A01", "code": 200, "risk": "Publicly accessible"}
             elif r.status_code == 403:
-                findings[path] = {
-                    "status":  "INFO",
-                    "code":    403,
-                    "message": "Path exists but access is forbidden"
-                }
+                findings[path] = {"status": "INFO", "code": 403, "message": "Path forbidden"}
             elif r.status_code in (301, 302):
-                findings[path] = {
-                    "status":   "INFO",
-                    "code":     r.status_code,
-                    "redirect": r.headers.get("Location", "unknown")
-                }
+                findings[path] = {"status": "INFO", "code": r.status_code, "redirect": r.headers.get("Location", "unknown")}
             else:
                 findings[path] = {"status": "PASS", "code": r.status_code}
 
@@ -211,12 +193,10 @@ def path_scanner_node(state: SecurityState) -> dict:
             findings[path] = {"status": "SKIP"}
 
     accessible = sum(1 for v in findings.values() if v.get("status") == "WARN")
+    
     return {
         "path_findings": findings,
-        "messages": [AIMessage(
-            content=f"[Path Scanner] Done — {len(sensitive_paths)} paths checked, "
-                    f"{accessible} accessible"
-        )]
+        "messages": [AIMessage(content=f"[Path Scanner] Done — {len(combined_paths)} context-aware paths checked, {accessible} accessible")]
     }
             
 def cookie_checker_node(state: SecurityState) -> dict:
@@ -266,48 +246,57 @@ def cookie_checker_node(state: SecurityState) -> dict:
     }
 
 def error_checker_node(state: SecurityState) -> dict:
-    """
-    Checks if error pages leak stack traces or internal details.
-    Maps to: A09
-    """
-    base = state["url"].rstrip("/")
+    parsed = urlparse(state["url"])
+    base = f"{parsed.scheme}://{parsed.netloc}"
     findings = {}
 
-    test_paths = [
-        "/this-page-absolutely-does-not-exist-xyz-123",
-        "/error-test-probe-abc"
-    ]
-    leak_keywords = [
-        "stack trace", "traceback", "exception",
-        "sql syntax", "at line", "debug", "undefined method",
-        "mysql_fetch", "ORA-", "pg_query", "mysqli_error",
-        "fatal error", "parse error", "notice:", "warning:",
-        "internal server error details", "django.core",
-        "werkzeug", "flask", "laravel", "symfony"
-    ]
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash",          
+        google_api_key=GEMINI_API_KEY,
+        temperature=0.1, 
+    )
 
-    for path in test_paths:
-        try:
-            r = requests.get(base + path, timeout=5)
-            body = r.text.lower()
-            found_leaks = [k for k in leak_keywords if k in body]
+    test_path = "/api/v1/internal_error_test_probe_xyz_999"
+    
+    try:
+        r = requests.get(base + test_path, timeout=5)
+        body_snippet = r.text[:2500] 
 
-            findings[path] = {
-                "status":      "FAIL" if found_leaks else "PASS",
-                "owasp":       "A09",
-                "status_code": r.status_code,
-                "leaks_found": found_leaks,
-                "risk":        f"Error page reveals internal details: {found_leaks}"
-                               if found_leaks else None
-            }
-        except Exception as e:
-            findings[path] = {"status": "ERROR", "message": str(e)}
+        prompt = f"""You are a security tool looking for Information Leakage.
+I requested `{test_path}` on the server and received a {r.status_code} status.
+Here is the first 2500 characters of the response body:
+
+---
+{body_snippet}
+---
+
+Does this response leak sensitive internal information? Look for stack traces, database errors, framework defaults, or internal paths.
+Respond ONLY with a valid JSON object in this exact format (no markdown):
+{{
+  "leak_found": true/false,
+  "leaked_details": ["detail 1", "detail 2"] 
+}}
+"""
+        response = llm.invoke([HumanMessage(content=prompt)])
+        clean_text = response.content.strip().lstrip("```json").rstrip("```").strip()
+        analysis = json.loads(clean_text)
+
+        findings[test_path] = {
+            "status": "FAIL" if analysis.get("leak_found") else "PASS",
+            "owasp": "A09",
+            "status_code": r.status_code,
+            "leaks_found": analysis.get("leaked_details", []),
+            "risk": f"Error page reveals: {analysis.get('leaked_details')}" if analysis.get("leak_found") else None
+        }
+
+    except Exception as e:
+        findings[test_path] = {"status": "ERROR", "message": str(e)}
 
     return {
         "error_findings": findings,
-        "messages": [AIMessage(content="[Error Checker] Done — error page content analyzed")]
+        "messages": [AIMessage(content="[Error Checker] Done — dynamic error content analyzed")]
     }
-
+    
 def form_sri_checker_node(state: SecurityState) -> dict:
     """
     Checks CSRF tokens on POST forms and SRI on external scripts.
